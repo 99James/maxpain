@@ -13,8 +13,9 @@ so every max pain disagreed with OptionCharts. Nasdaq had the new session's
 close and the new open interest, and matched OptionCharts on all seven
 tickers checked.
 
-`lastTrade` reads "LAST TRADE: $225.51 (AS OF SEP 23, 2026)": it dates the
-price to a session but gives no time of day, so none is invented.
+`lastTrade` reads "LAST TRADE: $225.51 (AS OF SEP 23, 2026)", sometimes with
+a time appended ("... 2026 7:30 PM ET"). Only the date is kept: it names the
+session, which is what freshness is judged by.
 """
 
 from __future__ import annotations
@@ -41,8 +42,11 @@ URL_TEMPLATE = (
 # has its nearest expiry in range, narrow enough to keep the payload small.
 WINDOW_DAYS = 60
 
+# Nasdaq sometimes appends a time ("... 2026 7:30 PM ET"). Only the date is
+# used -- it names the session -- but the time must not make the line unreadable.
 _LAST_TRADE = re.compile(
-    r"\$\s*(?P<price>[\d,]+(?:\.\d+)?)\s*\(AS OF (?P<date>[A-Z]{3} \d{1,2}, \d{4})\)",
+    r"\$\s*(?P<price>[\d,]+(?:\.\d+)?)\s*"
+    r"\(AS OF (?P<date>[A-Z]{3} \d{1,2}, \d{4})(?:\s+\d{1,2}:\d{2}\s*[AP]M(?:\s+ET)?)?\)",
     re.IGNORECASE,
 )
 

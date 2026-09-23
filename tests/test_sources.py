@@ -88,6 +88,15 @@ class NasdaqRejectionTest(unittest.TestCase):
         self.assertEqual((call.strike, call.open_interest), (212.5, 1000.0))
         self.assertEqual(put.open_interest, 0.0)
 
+    def test_accepts_a_time_after_the_date(self):
+        """Seen live for DELL on 2026-09-23; rejecting it forced a stale fallback."""
+        for stamp in ("SEP 23, 2026 7:30 PM ET", "SEP 23, 2026 10:05 AM ET", "SEP 23, 2026 4:00 PM"):
+            with self.subTest(stamp):
+                data = {**self.GOOD["data"], "lastTrade": f"LAST TRADE: $549.73 (AS OF {stamp})"}
+                chain = self.parse({"status": {"rCode": 200}, "data": data})
+                self.assertEqual(chain.price, 549.73)
+                self.assertEqual(chain.session, dt.date(2026, 9, 23))
+
     def test_unknown_symbol_is_not_found(self):
         payload = {"status": {"rCode": 400, "bCodeMessage": [
             {"code": 1001, "errorMessage": "Symbol not exists."}]}, "data": None}
