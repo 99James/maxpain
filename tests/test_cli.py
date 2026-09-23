@@ -91,11 +91,12 @@ class MainTest(unittest.TestCase):
                 main(["NVDA", "--no-verify"])
         self.assertFalse(retrieve.call_args.kwargs["verify"])
 
-    def test_max_age_is_passed_through(self):
+    def test_every_ticker_is_judged_against_one_clock(self):
         with mock.patch("maxpain.cli.retrieve", return_value=RESULT) as retrieve:
             with redirect_stdout(io.StringIO()):
-                main(["NVDA", "--max-age", "45"])
-        self.assertEqual(retrieve.call_args.kwargs["max_age_minutes"], 45.0)
+                main(["NVDA", "AMZN", "MSFT"])
+        clocks = {call.kwargs["now"] for call in retrieve.call_args_list}
+        self.assertEqual(len(clocks), 1)
 
 
 if __name__ == "__main__":

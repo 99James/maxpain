@@ -62,8 +62,10 @@ class Chain:
 
     ticker: str
     price: float
-    as_of: dt.datetime
+    as_of: dt.datetime  # UTC: publish time if the source states one, else fetch time
     contracts: tuple[Contract, ...]
+    session: dt.date | None = None  # trading day `price` is from; None = unknown
+    source: str = "CBOE"
 
     def expiries(self) -> tuple[dt.date, ...]:
         return tuple(sorted({c.expiry for c in self.contracts}))
@@ -84,5 +86,7 @@ class TickerResult:
     max_pain: float | None = None
     expiry: dt.date | None = None
     as_of: dt.datetime | None = None
+    session: dt.date | None = None
+    source: str | None = None
     verified_against: float | None = None
     detail: str = ""

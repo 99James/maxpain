@@ -1,4 +1,4 @@
-"""Source parsing: CBOE chains and OptionCharts fragments.
+"""Source parsing: Nasdaq and CBOE chains, and OptionCharts fragments.
 
 Both are exercised against the committed snapshots plus deliberately broken
 payloads. The recurring theme is that a malformed response must raise or
@@ -10,12 +10,112 @@ from __future__ import annotations
 import datetime as dt
 import unittest
 
-from maxpain.sources import cboe, optioncharts
+from maxpain import http
+from maxpain.models import OptionType
+from maxpain.sources import cboe, nasdaq, optioncharts
 from tests.fixtures import (
+    NASDAQ_RETRIEVED_AT,
+    NASDAQ_SESSION,
     OPTIONCHARTS_EXPECTED,
     load_cboe_payload,
+    load_nasdaq_payload,
     load_optioncharts_document,
 )
+
+
+class NasdaqParseTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.chain = nasdaq.parse_chain(
+            load_nasdaq_payload(), "nvda", retrieved_at=NASDAQ_RETRIEVED_AT
+        )
+
+    def test_extracts_price_session_and_source(self):
+        self.assertEqual(self.chain.ticker, "NVDA")
+        self.assertEqual(self.chain.price, 225.51)
+        self.assertEqual(self.chain.session, NASDAQ_SESSION)
+        self.assertEqual(self.chain.source, "Nasdaq")
+        self.assertEqual(self.chain.as_of, NASDAQ_RETRIEVED_AT)
+
+    def test_each_row_yields_a_call_and_a_put(self):
+        calls = [c for c in self.chain.contracts if c.option_type is OptionType.CALL]
+        puts = [c for c in self.chain.contracts if c.option_type is OptionType.PUT]
+        self.assertEqual(len(calls), len(puts))
+        self.assertGreater(len(calls), 500)
+
+    def test_strike_and_expiry_come_from_the_occ_symbol(self):
+        contract = next(
+            c for c in self.chain.contracts
+            if c.expiry == dt.date(2026, 9, 25) and c.strike == 215.0
+            and c.option_type is OptionType.PUT
+        )
+        self.assertEqual(contract.open_interest, 12453.0)
+
+    def test_window_starts_at_the_requested_date(self):
+        self.assertEqual(min(self.chain.expiries()), dt.date(2026, 9, 25))
+
+    def test_url_requests_a_date_window(self):
+        url = nasdaq.url_for(" nvda ", dt.date(2026, 9, 24))
+        self.assertIn("/quote/NVDA/option-chain", url)
+        self.assertIn("fromdate=2026-09-24", url)
+        self.assertIn("todate=2026-11-23", url)
+
+
+class NasdaqRejectionTest(unittest.TestCase):
+    """A missing field must raise, not default to zero."""
+
+    GOOD = {
+        "status": {"rCode": 200},
+        "data": {
+            "lastTrade": "LAST TRADE: $1,225.51 (AS OF SEP 23, 2026)",
+            "table": {"rows": [
+                {"expirygroup": "September 25, 2026", "drillDownURL": None},
+                {
+                    "drillDownURL": "/market-activity/stocks/x/option-chain/call-put-options/x--260925c00212500",
+                    "c_Openinterest": "1,000", "p_Openinterest": "--",
+                },
+            ]},
+        },
+    }
+
+    def parse(self, payload):
+        return nasdaq.parse_chain(payload, "X", retrieved_at=NASDAQ_RETRIEVED_AT)
+
+    def test_parses_minimal_payload(self):
+        chain = self.parse(self.GOOD)
+        self.assertEqual(chain.price, 1225.51)
+        call, put = chain.contracts
+        self.assertEqual((call.strike, call.open_interest), (212.5, 1000.0))
+        self.assertEqual(put.open_interest, 0.0)
+
+    def test_unknown_symbol_is_not_found(self):
+        payload = {"status": {"rCode": 400, "bCodeMessage": [
+            {"code": 1001, "errorMessage": "Symbol not exists."}]}, "data": None}
+        with self.assertRaises(http.NotFoundError):
+            self.parse(payload)
+
+    def test_rejects_bad_payloads(self):
+        data = self.GOOD["data"]
+        cases = [
+            ("not a dict", []),
+            ("error code", {"status": {"rCode": 500}, "data": data}),
+            ("no data", {"status": {"rCode": 200}}),
+            ("no last trade", {"status": {"rCode": 200}, "data": {**data, "lastTrade": None}}),
+            ("undated price", {"status": {"rCode": 200},
+                               "data": {**data, "lastTrade": "LAST TRADE: $10.00"}}),
+            ("zero price", {"status": {"rCode": 200},
+                            "data": {**data, "lastTrade": "LAST TRADE: $0 (AS OF SEP 23, 2026)"}}),
+            ("no rows", {"status": {"rCode": 200}, "data": {**data, "table": {}}}),
+        ]
+        for label, payload in cases:
+            with self.subTest(label), self.assertRaises(cboe.SourceError):
+                self.parse(payload)
+
+    def test_unreadable_open_interest_drops_the_row_not_zeroes_it(self):
+        rows = [dict(self.GOOD["data"]["table"]["rows"][1], c_Openinterest="n/a")]
+        payload = {"status": {"rCode": 200}, "data": {**self.GOOD["data"], "table": {"rows": rows}}}
+        with self.assertRaises(cboe.SourceError):
+            self.parse(payload)
 
 
 class CboeParseTest(unittest.TestCase):
@@ -30,6 +130,11 @@ class CboeParseTest(unittest.TestCase):
 
     def test_parses_timestamp(self):
         self.assertEqual(self.chain.as_of, dt.datetime(2026, 8, 11, 3, 44, 39))
+
+    def test_dates_price_by_last_trade_not_publish_time(self):
+        """Published on the 11th, but the price is the 10th's close."""
+        self.assertEqual(self.chain.session, dt.date(2026, 8, 10))
+        self.assertEqual(self.chain.source, "CBOE")
 
     def test_expiries_are_sorted_and_unique(self):
         expiries = self.chain.expiries()

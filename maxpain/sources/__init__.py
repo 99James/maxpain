@@ -1,1 +1,2 @@
-"""Data sources: CBOE for prices and open interest, OptionCharts for verification."""
+"""Data sources: Nasdaq (primary) and CBOE (fallback) for prices and open interest,
+OptionCharts for verification."""

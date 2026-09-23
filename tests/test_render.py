@@ -9,6 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import json
 import unittest
+from dataclasses import replace
 
 from maxpain.models import Status, TickerResult
 from maxpain.render import MISSING, exit_code, render_json, render_table
@@ -22,6 +23,8 @@ OK_ROW = TickerResult(
     max_pain=212.5,
     expiry=dt.date(2026, 8, 12),
     as_of=AS_OF,
+    session=dt.date(2026, 8, 10),
+    source="Nasdaq",
     verified_against=212.5,
 )
 
@@ -37,10 +40,23 @@ class TableTest(unittest.TestCase):
         self.assertIn("2026-08-12", output)
         self.assertIn("OK", output)
 
-    def test_shows_timestamp_and_delay_warning(self):
+    def test_shows_session_source_and_timestamp(self):
         output = render_table([OK_ROW])
-        self.assertIn("2026-08-11 03:44:39", output)
+        self.assertIn("Prices from the 2026-08-10 trading session", output)
+        self.assertIn("Source: Nasdaq, as of 2026-08-11 03:44:39 UTC", output)
+        self.assertNotIn("delayed", output.lower())
+
+    def test_warns_about_delay_when_cboe_fallback_is_used(self):
+        fallback = replace(OK_ROW, ticker="AMD", source="CBOE", session=dt.date(2026, 8, 7))
+        output = render_table([OK_ROW, fallback])
+        self.assertIn("Source: CBOE, Nasdaq", output)
         self.assertIn("delayed", output.lower())
+        self.assertIn("2026-08-07 .. 2026-08-10", output)
+
+    def test_json_carries_session_and_source(self):
+        row = json.loads(render_json([OK_ROW]))[0]
+        self.assertEqual(row["session"], "2026-08-10")
+        self.assertEqual(row["source"], "Nasdaq")
 
     def test_detail_is_surfaced(self):
         self.assertIn("no such ticker", render_table([FAILED_ROW]))

@@ -61,13 +61,26 @@ def render_table(results: Sequence[TickerResult]) -> str:
         lines.append("")
         lines.extend(notes)
 
-    stamps = {r.as_of for r in results if r.as_of}
-    if stamps:
-        newest = max(stamps)
+    # The session is what dates a price. A snapshot stamp is not enough: CBOE
+    # republishes overnight without new trades, so a fresh-looking stamp can
+    # sit on top of the previous session's close.
+    sessions = sorted({r.session for r in results if r.session})
+    sources = sorted({r.source for r in results if r.source})
+    stamps = [r.as_of for r in results if r.as_of]
+    if sessions or sources:
         lines.append("")
-        lines.append(
-            f"  Data as of {newest:%Y-%m-%d %H:%M:%S} (CBOE delayed quotes, ~15 min behind)"
-        )
+    if sessions:
+        span = sessions[0].isoformat()
+        if len(sessions) > 1:
+            span += f" .. {sessions[-1].isoformat()}"
+        lines.append(f"  Prices from the {span} trading session")
+    if sources:
+        line = f"  Source: {', '.join(sources)}"
+        if stamps:
+            line += f", as of {max(stamps):%Y-%m-%d %H:%M:%S} UTC"
+        if "CBOE" in sources:
+            line += " (CBOE quotes are delayed ~15 min)"
+        lines.append(line)
 
     return "\n".join(lines)
 
@@ -83,6 +96,8 @@ def render_json(results: Sequence[TickerResult]) -> str:
             "max_pain": result.max_pain,
             "expiry": result.expiry.isoformat() if result.expiry else None,
             "as_of": result.as_of.isoformat(sep=" ") if result.as_of else None,
+            "session": result.session.isoformat() if result.session else None,
+            "source": result.source,
             "verified_against": result.verified_against,
             "detail": result.detail or None,
         }

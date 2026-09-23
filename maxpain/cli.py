@@ -55,8 +55,10 @@ def build_parser() -> argparse.ArgumentParser:
         prog="maxpain",
         description="Current price and options max pain for US stock tickers.",
         epilog=(
-            "Max pain is computed from CBOE open interest and cross-checked "
-            "against OptionCharts. Exit status is non-zero if any row is not "
+            "Price and open interest come from Nasdaq (CBOE as fallback); max "
+            "pain is computed from them and cross-checked against OptionCharts. "
+            "A price from before the latest trading session is flagged STALE. "
+            "Exit status is non-zero if any row is not "
             "trustworthy."
         ),
     )
@@ -67,16 +69,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="skip the OptionCharts cross-check (faster, results marked UNVERIFIED)",
     )
     parser.add_argument("--json", action="store_true", help="emit JSON instead of a table")
-    parser.add_argument(
-        "--max-age",
-        type=float,
-        metavar="MINUTES",
-        help=(
-            "flag data older than MINUTES as STALE. Off by default: quotes are "
-            "legitimately hours old outside market hours, and the snapshot "
-            "timestamp is always shown regardless."
-        ),
-    )
     parser.add_argument(
         "--timeout", type=float, default=http.DEFAULT_TIMEOUT, metavar="SECONDS"
     )
@@ -93,15 +85,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
 
-    today = dt.date.today()
+    # One clock for the whole run, so every row is judged against the same
+    # session. Dates come from New York's calendar, not this machine's.
+    now = dt.datetime.now(dt.UTC).replace(tzinfo=None)
 
     def work(ticker: str):
         return retrieve(
             ticker,
-            today=today,
+            now=now,
             verify=not args.no_verify,
             timeout=args.timeout,
-            max_age_minutes=args.max_age,
         )
 
     workers = max(1, min(args.workers, len(tickers)))

@@ -20,12 +20,15 @@ from maxpain.compute import (
     select_expiry_with_open_interest,
 )
 from maxpain.models import Contract, OptionType
-from maxpain.sources import cboe, optioncharts
+from maxpain.sources import cboe, nasdaq, optioncharts
 from tests.fixtures import (
     CAPTURE_DATE,
+    NASDAQ_RETRIEVED_AT,
     OPTIONCHARTS_EXPECTED,
     load_cboe_payload,
+    load_nasdaq_payload,
     load_optioncharts_document,
+    load_optioncharts_document_20260923,
 )
 
 CALL, PUT = OptionType.CALL, OptionType.PUT
@@ -78,6 +81,40 @@ class GoldenCrossSourceTest(unittest.TestCase):
             with self.subTest(expiry=expiry):
                 self.assertEqual(max_pain_for_expiry(self.chain.contracts, expiry), expected)
 
+
+
+class NasdaqGoldenCrossSourceTest(unittest.TestCase):
+    """Same check against the Nasdaq snapshot, the primary source.
+
+    Captured 2026-09-23 after the close, when CBOE was still serving the
+    previous session and disagreed with OptionCharts on every ticker. Nasdaq's
+    open interest reproduces OptionCharts exactly.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.chain = nasdaq.parse_chain(
+            load_nasdaq_payload(), "NVDA", retrieved_at=NASDAQ_RETRIEVED_AT
+        )
+        cls.published = optioncharts.parse_max_pain_by_expiry(
+            load_optioncharts_document_20260923()
+        )
+
+    def test_matches_optioncharts_on_every_shared_expiry(self):
+        shared = sorted(set(self.published) & set(self.chain.expiries()))
+        self.assertGreaterEqual(len(shared), 8, "expected substantial overlap")
+
+        mismatches = [
+            (expiry, max_pain_for_expiry(self.chain.contracts, expiry), self.published[expiry])
+            for expiry in shared
+            if max_pain_for_expiry(self.chain.contracts, expiry) != self.published[expiry]
+        ]
+        self.assertEqual(mismatches, [], f"{len(mismatches)}/{len(shared)} expiries disagree")
+
+    def test_nearest_expiry(self):
+        expiry = select_expiry_with_open_interest(self.chain.contracts, dt.date(2026, 9, 24))
+        self.assertEqual(expiry, dt.date(2026, 9, 25))
+        self.assertEqual(max_pain_for_expiry(self.chain.contracts, expiry), 220.0)
 
 class HandComputedTest(unittest.TestCase):
     """A chain small enough to verify with pen and paper.
